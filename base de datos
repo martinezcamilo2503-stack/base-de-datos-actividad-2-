@@ -1,0 +1,349 @@
+CREATE DATABASE IF NOT EXISTS TourSystem;
+USE TourSystem;
+
+CREATE TABLE Destino (
+  id_destino INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  pais VARCHAR(100),
+  tipo VARCHAR(50),
+  descripcion TEXT,
+  popularidad INT DEFAULT 0
+);
+
+CREATE TABLE Paquete (
+  id_paquete INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  id_destino INT,
+  duracion INT,
+  precio_base DECIMAL(10,2),
+  disponibilidad INT DEFAULT 20,
+  FOREIGN KEY (id_destino) REFERENCES Destino(id_destino)
+);
+
+CREATE TABLE Guia (
+  id_guia INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  idioma VARCHAR(50),
+  destino_asignado INT,
+  disponible TINYINT DEFAULT 1,
+  FOREIGN KEY (destino_asignado) REFERENCES Destino(id_destino)
+);
+
+CREATE TABLE Proveedor (
+  id_proveedor INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  destino_asociado INT,
+  comision DECIMAL(5,2),
+  FOREIGN KEY (destino_asociado) REFERENCES Destino(id_destino)
+);
+
+CREATE TABLE Promocion (
+  id_promocion INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  descuento DECIMAL(5,2),
+  fecha_inicio DATE,
+  fecha_fin DATE,
+  activa TINYINT DEFAULT 1
+);
+
+CREATE TABLE Cliente (
+  id_cliente INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  correo VARCHAR(100)
+);
+
+CREATE TABLE Reserva (
+  id_reserva INT AUTO_INCREMENT PRIMARY KEY,
+  id_cliente INT,
+  id_paquete INT,
+  fecha_reserva DATE,
+  personas INT,
+  total DECIMAL(10,2),
+  estado VARCHAR(30) DEFAULT 'Activa',
+  FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente),
+  FOREIGN KEY (id_paquete) REFERENCES Paquete(id_paquete)
+);
+
+CREATE TABLE Actividad (
+  id_actividad INT AUTO_INCREMENT PRIMARY KEY,
+  id_destino INT,
+  nombre VARCHAR(100),
+  tipo VARCHAR(50),
+  capacidad INT,
+  ocupados INT DEFAULT 0,
+  precio DECIMAL(10,2),
+  FOREIGN KEY (id_destino) REFERENCES Destino(id_destino)
+);
+
+CREATE TABLE Alojamiento (
+  id_alojamiento INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100),
+  categoria INT,
+  capacidad INT,
+  ocupados INT DEFAULT 0,
+  precio DECIMAL(10,2),
+  id_destino INT,
+  FOREIGN KEY (id_destino) REFERENCES Destino(id_destino)
+);
+
+DELIMITER //
+CREATE PROCEDURE CrearPaqueteTuristico(
+  IN p_nombre VARCHAR(100),
+  IN p_id_destino INT,
+  IN p_duracion INT,
+  IN p_precio DECIMAL(10,2)
+)
+BEGIN
+  INSERT INTO Paquete(nombre, id_destino, duracion, precio_base)
+  VALUES(p_nombre, p_id_destino, p_duracion, p_precio);
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE RegistrarReserva(
+  IN p_id_cliente INT,
+  IN p_id_paquete INT,
+  IN p_personas INT
+)
+BEGIN
+  DECLARE v_disponibles INT;
+  SELECT disponibilidad INTO v_disponibles FROM Paquete WHERE id_paquete = p_id_paquete;
+  IF v_disponibles >= p_personas THEN
+    INSERT INTO Reserva(id_cliente, id_paquete, fecha_reserva, personas, total)
+    VALUES(p_id_cliente, p_id_paquete, CURDATE(), p_personas,
+      (SELECT precio_base * p_personas FROM Paquete WHERE id_paquete = p_id_paquete));
+  ELSE
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No hay disponibilidad suficiente';
+  END IF;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE AsignarGuiaTuristico(IN p_id_paquete INT, IN p_idioma VARCHAR(50))
+BEGIN
+  UPDATE Guia
+  SET disponible = 0
+  WHERE idioma = p_idioma
+    AND destino_asignado = (SELECT id_destino FROM Paquete WHERE id_paquete = p_id_paquete)
+  LIMIT 1;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE GestionarProveedoresLocales(
+  IN p_id_destino INT,
+  IN p_nombre VARCHAR(100),
+  IN p_comision DECIMAL(5,2)
+)
+BEGIN
+  INSERT INTO Proveedor(nombre, destino_asociado, comision)
+  VALUES(p_nombre, p_id_destino, p_comision);
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE CrearPromocionTemporada(
+  IN p_nombre VARCHAR(100),
+  IN p_descuento DECIMAL(5,2),
+  IN p_inicio DATE,
+  IN p_fin DATE
+)
+BEGIN
+  INSERT INTO Promocion(nombre, descuento, fecha_inicio, fecha_fin)
+  VALUES(p_nombre, p_descuento, p_inicio, p_fin);
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER TR_ActualizarDisponibilidadPaquete
+AFTER INSERT ON Reserva
+FOR EACH ROW
+BEGIN
+  UPDATE Paquete SET disponibilidad = disponibilidad - NEW.personas
+  WHERE id_paquete = NEW.id_paquete;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER TR_CalcularCostoPaquete
+BEFORE INSERT ON Paquete
+FOR EACH ROW
+BEGIN
+  SET NEW.precio_base = NEW.precio_base + 
+    (SELECT IFNULL(AVG(precio), 0) FROM Actividad WHERE id_destino = NEW.id_destino);
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER TR_VerificarCapacidadActividad
+BEFORE INSERT ON Reserva
+FOR EACH ROW
+BEGIN
+  UPDATE Actividad
+  SET ocupados = ocupados + NEW.personas
+  WHERE id_destino = (SELECT id_destino FROM Paquete WHERE id_paquete = NEW.id_paquete)
+    AND ocupados + NEW.personas <= capacidad;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER TR_ActualizarEstadisticasDestino
+AFTER INSERT ON Reserva
+FOR EACH ROW
+BEGIN
+  UPDATE Destino
+  SET popularidad = popularidad + 1
+  WHERE id_destino = (SELECT id_destino FROM Paquete WHERE id_paquete = NEW.id_paquete);
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER TR_AplicarDescuentoPromocion
+BEFORE INSERT ON Reserva
+FOR EACH ROW
+BEGIN
+  DECLARE v_desc DECIMAL(5,2);
+  SELECT descuento INTO v_desc
+  FROM Promocion
+  WHERE activa = 1 AND CURDATE() BETWEEN fecha_inicio AND fecha_fin
+  LIMIT 1;
+  IF v_desc IS NOT NULL THEN
+    SET NEW.total = (SELECT precio_base * NEW.personas FROM Paquete WHERE id_paquete = NEW.id_paquete);
+    SET NEW.total = NEW.total - (NEW.total * v_desc / 100);
+  END IF;
+END //
+DELIMITER ;
+
+CREATE VIEW V_PaquetesDisponibles AS
+SELECT p.id_paquete, p.nombre AS paquete, d.nombre AS destino, p.precio_base, p.disponibilidad
+FROM Paquete p
+JOIN Destino d ON p.id_destino = d.id_destino
+WHERE p.disponibilidad > 0;
+
+CREATE VIEW V_ReservasActivas AS
+SELECT r.id_reserva, c.nombre AS cliente, p.nombre AS paquete, r.fecha_reserva, r.estado
+FROM Reserva r
+JOIN Cliente c ON r.id_cliente = c.id_cliente
+JOIN Paquete p ON r.id_paquete = p.id_paquete
+WHERE r.estado = 'Activa';
+
+CREATE VIEW V_DisponibilidadGuias AS
+SELECT g.id_guia, g.nombre, g.idioma, d.nombre AS destino, g.disponible
+FROM Guia g
+JOIN Destino d ON g.destino_asignado = d.id_destino;
+
+CREATE VIEW V_OcupacionAlojamientos AS
+SELECT d.nombre AS destino,
+       ROUND(SUM(a.ocupados)/SUM(a.capacidad)*100,2) AS porcentaje_ocupacion
+FROM Alojamiento a
+JOIN Destino d ON a.id_destino = d.id_destino
+GROUP BY d.nombre;
+
+CREATE VIEW V_EstadisticasDestinos AS
+SELECT d.nombre AS destino, COUNT(r.id_reserva) AS total_reservas
+FROM Reserva r
+JOIN Paquete p ON r.id_paquete = p.id_paquete
+JOIN Destino d ON p.id_destino = d.id_destino
+GROUP BY d.nombre;
+
+DELIMITER //
+CREATE EVENT EVT_VerificarConfirmacionesPendientes
+ON SCHEDULE EVERY 1 DAY
+DO UPDATE Reserva
+   SET estado = 'Pendiente'
+   WHERE estado = 'Activa' AND fecha_reserva < CURDATE();
+DELIMITER ;
+
+DELIMITER //
+CREATE EVENT EVT_ActualizarTarifasTemporada
+ON SCHEDULE EVERY 1 MONTH
+DO UPDATE Paquete
+   SET precio_base = precio_base * 1.1
+   WHERE MONTH(CURDATE()) BETWEEN 6 AND 8;
+DELIMITER ;
+
+DELIMITER //
+CREATE EVENT EVT_GenerarReporteOcupacion
+ON SCHEDULE EVERY 1 MONTH
+DO INSERT INTO Actividad(id_destino, nombre, tipo, capacidad, ocupados, precio)
+   SELECT id_destino, 'Reporte Mensual', 'Reporte', 0, 0, 0 FROM Destino;
+DELIMITER ;
+
+DELIMITER //
+CREATE EVENT EVT_NotificarSalidasProximas
+ON SCHEDULE EVERY 1 DAY
+DO UPDATE Reserva
+   SET estado = 'Próxima'
+   WHERE fecha_reserva = DATE_ADD(CURDATE(), INTERVAL 3 DAY);
+DELIMITER ;
+
+DELIMITER //
+CREATE EVENT EVT_ActualizarDisponibilidadPromocion
+ON SCHEDULE EVERY 1 DAY
+DO UPDATE Promocion
+   SET activa = 0 WHERE fecha_fin < CURDATE();
+DELIMITER ;
+
+DELIMITER //
+CREATE FUNCTION FN_CalcularPrecioReserva(p_id_paquete INT, p_personas INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+  DECLARE v_precio DECIMAL(10,2);
+  SELECT precio_base INTO v_precio FROM Paquete WHERE id_paquete = p_id_paquete;
+  RETURN v_precio * p_personas;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE FUNCTION FN_VerificarDisponibilidadFecha(p_id_paquete INT, p_fecha DATE)
+RETURNS TINYINT
+DETERMINISTIC
+BEGIN
+  DECLARE v_disp INT;
+  SELECT disponibilidad INTO v_disp FROM Paquete WHERE id_paquete = p_id_paquete;
+  RETURN IF(v_disp > 0, 1, 0);
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE FUNCTION FN_ObtenerGuiasRecomendados(p_id_destino INT, p_idioma VARCHAR(50))
+RETURNS INT
+DETERMINISTIC
+BEGIN
+  DECLARE v_id INT;
+  SELECT id_guia INTO v_id
+  FROM Guia
+  WHERE destino_asignado = p_id_destino
+    AND idioma = p_idioma
+    AND disponible = 1
+  LIMIT 1;
+  RETURN v_id;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE FUNCTION FN_CalcularComisionProveedor(p_id_proveedor INT, p_monto DECIMAL(10,2))
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+  DECLARE v_com DECIMAL(5,2);
+  SELECT comision INTO v_com FROM Proveedor WHERE id_proveedor = p_id_proveedor;
+  RETURN p_monto * v_com / 100;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE FUNCTION FN_ObtenerTemporadaFecha(p_fecha DATE)
+RETURNS VARCHAR(20)
+DETERMINISTIC
+BEGIN
+  DECLARE v_mes INT;
+  SET v_mes = MONTH(p_fecha);
+  RETURN CASE
+           WHEN v_mes BETWEEN 6 AND 8 THEN 'Alta'
+           WHEN v_mes BETWEEN 12 AND 2 THEN 'Alta'
+           ELSE 'Baja'
+         END;
+END //
+DELIMITER ;
