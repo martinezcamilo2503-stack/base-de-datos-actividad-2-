@@ -347,3 +347,56 @@ BEGIN
          END;
 END //
 DELIMITER ;
+
+SELECT nombre, tipo, capacidad, precio
+FROM Actividad
+WHERE id_destino = id;
+
+SELECT id_paquete, nombre, duracion, precio_base
+FROM Paquete
+WHERE duracion > 7;
+
+SELECT r.id_reserva, c.nombre AS cliente, p.nombre AS paquete, r.fecha_reserva, r.personas, r.total
+FROM Reserva r
+JOIN Cliente c ON r.id_cliente = c.id_cliente
+JOIN Paquete p ON r.id_paquete = p.id_paquete
+WHERE r.fecha_reserva = '2024-07-15'
+  AND r.id_paquete = id;
+
+SELECT id_destino, nombre, pais, tipo
+FROM Destino
+WHERE tipo IN ('Playa', 'Montaña');
+
+SELECT r.id_reserva, c.nombre AS cliente, p.nombre AS paquete, r.fecha_reserva, r.total
+FROM Reserva r
+JOIN Cliente c ON r.id_cliente = c.id_cliente
+JOIN Paquete p ON r.id_paquete = p.id_paquete
+WHERE r.fecha_reserva BETWEEN '2024-06-01' AND '2024-08-31';
+
+SELECT id_actividad, nombre, tipo, precio, capacidad
+FROM Actividad
+WHERE tipo IN ('Cultural', 'Aventura', 'Gastronómica');
+
+SELECT id_destino, nombre, pais, tipo, descripcion
+FROM Destino
+WHERE descripcion LIKE '%patrimonio%'
+   OR descripcion LIKE '%histórico%';
+
+SELECT p.id_paquete, p.nombre, d.nombre AS destino
+FROM Paquete p
+JOIN Destino d ON p.id_destino = d.id_destino
+WHERE p.id_destino NOT IN (
+  SELECT destino_asignado FROM Guia WHERE disponible = 0
+);
+
+SELECT id_alojamiento, nombre, categoria, precio, id_destino
+FROM Alojamiento
+ORDER BY categoria DESC, precio ASC;
+
+SELECT d.nombre AS destino,
+       FN_ObtenerTemporadaFecha(r.fecha_reserva) AS temporada,
+       SUM(r.total) AS ingresos_totales
+FROM Reserva r
+JOIN Paquete p ON r.id_paquete = p.id_paquete
+JOIN Destino d ON p.id_destino = d.id_destino
+GROUP BY d.nombre, FN_ObtenerTemporadaFecha(r.fecha_reserva);
